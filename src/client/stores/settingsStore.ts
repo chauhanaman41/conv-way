@@ -79,3 +79,4 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     persistSettings({ dataSaverMode: dataSaver });
   },
 }));
+

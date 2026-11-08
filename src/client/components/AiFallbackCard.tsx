@@ -118,3 +118,4 @@ export const AiFallbackCard: React.FC<AiFallbackCardProps> = ({ data, onDismiss 
     </div>
   );
 };
+

@@ -307,3 +307,4 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
     set({ isPipActive: false, pipVideo: null });
   },
 }));
+

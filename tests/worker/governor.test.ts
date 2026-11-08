@@ -26,3 +26,4 @@ describe('GovernorService Unit Tests', () => {
     expect(state.canCallWebSearchFallback).toBe(true);
   });
 });
+

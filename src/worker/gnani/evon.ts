@@ -28,7 +28,6 @@ export class EvonClient {
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key-ID': this.apiKey!,
-          'Authorization': `Bearer ${this.apiKey!}`,
         },
         body: JSON.stringify({
           model: 'evon-v3.3',

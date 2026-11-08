@@ -273,3 +273,4 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   setStatus: (status) => set({ status }),
   clearTranscript: () => set({ liveTranscription: '', lastFinalQuestion: null }),
 }));
+
