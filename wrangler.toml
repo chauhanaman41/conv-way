@@ -1,0 +1,41 @@
+name = "conv-way"
+main = "src/worker/index.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare Worker Static Assets (serves Vite SPA from edge CDN)
+assets = { directory = "./dist", binding = "ASSETS", not_found_handling = "single-page-application" }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "conv-way-db"
+database_id = "da3713e6-2633-4a94-8302-2c9ce69f13a7"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "b120d3e40511405aa6c900052222849f"
+preview_id = "feeaa401eda844a2af7d1e0019bd6782"
+
+[triggers]
+# Daily at 02:00 UTC: Refresh Top 20 Trending Podcasts, reconcile credit governor, clean expired cache
+crons = ["0 2 * * *"]
+
+[vars]
+ENVIRONMENT = "production"
+GNANI_TOTAL_CREDIT_BUDGET = "3000"
+GNANI_BUDGET_END_DATE = "2026-12-15"
+GNANI_RESERVE_RATIO = "0.10"
+YOUTUBE_DAILY_SEARCH_BUDGET = "90"
+DAILY_TRANSCRIPT_FETCH_BUDGET = "5"
+D1_STORAGE_LIMIT_MB = "400"
+
+# Grounded Web Search Configuration (Trusted-Sites-First + Open Web Fallback)
+SEARCH_ORDER_TRUSTED = "google_cse,tavily,exa"
+SEARCH_ORDER_OPEN = "tavily,exa"
+SEARCH_MAX_PER_QUESTION = "2"
+SEARCH_DAILY_CAP = "30"
+GOOGLE_CSE_ENABLED = "true"
+GOOGLE_CSE_SUNSET = "2027-01-01"
+GOOGLE_CSE_DAILY_CAP = "90"
+SEARCH_CACHE_TTL_DAYS = "7"
