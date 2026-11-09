@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAudioStore } from '../stores/audioStore';
 import { usePlaybackStore } from '../stores/playbackStore';
+import { formatSpeechUtterance } from '../utils/speech-formatter';
 
 interface ControlBarProps {
   onAskQuery: (question: string) => Promise<void>;
@@ -8,13 +9,34 @@ interface ControlBarProps {
 }
 
 export const ControlBar: React.FC<ControlBarProps> = ({ onAskQuery, isLoading }) => {
-  const { status, isAmbientActive, toggleAmbientMode, startPushToTalk, stopPushToTalk } =
-    useAudioStore();
+  const {
+    status,
+    isAmbientActive,
+    toggleAmbientMode,
+    startPushToTalk,
+    stopPushToTalk,
+    setOnFinalUtterance,
+    micQuality,
+    micQualityLabel,
+  } = useAudioStore();
   const { callStack, returnToRoot, activeAnswerClip } =
     usePlaybackStore();
 
   const [textInput, setTextInput] = useState('');
   const [isInputExpanded, setIsInputExpanded] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    setOnFinalUtterance((utterance: string) => {
+      const formatted = formatSpeechUtterance(utterance);
+      if (formatted.text) {
+        setTextInput(formatted.text);
+        setIsInputExpanded(true);
+        setSpeechStatus(formatted.statusText ?? null);
+      }
+    });
+    return () => setOnFinalUtterance(null);
+  }, [setOnFinalUtterance]);
 
   const handleHoldStart = async () => {
     await startPushToTalk();
@@ -22,8 +44,14 @@ export const ControlBar: React.FC<ControlBarProps> = ({ onAskQuery, isLoading })
 
   const handleHoldEnd = async () => {
     const question = await stopPushToTalk();
-    if (question && question.trim().length > 3) {
-      await onAskQuery(question.trim());
+    const formatted = formatSpeechUtterance(question);
+    if (formatted.text) {
+      setTextInput(formatted.text);
+      setIsInputExpanded(true);
+      setSpeechStatus(formatted.statusText ?? null);
+    } else {
+      setSpeechStatus('Nothing recognized');
+      setIsInputExpanded(true);
     }
   };
 
@@ -38,7 +66,12 @@ export const ControlBar: React.FC<ControlBarProps> = ({ onAskQuery, isLoading })
 
   const handleDiveDeeper = async () => {
     if (!activeAnswerClip) return;
-    const followUp = `Tell me more details about ${activeAnswerClip.breadcrumbSummary}`;
+    const cleanSummary = (activeAnswerClip.breadcrumbSummary || '')
+      .replace(/\(\s*\d{1,4}:\d{2}\s*-\s*\d{1,4}:\d{2}\s*\)/g, '')
+      .replace(/segment\s+answering/gi, '')
+      .replace(/["']/g, '')
+      .trim();
+    const followUp = cleanSummary || 'overview';
     await onAskQuery(followUp);
   };
 
@@ -46,31 +79,64 @@ export const ControlBar: React.FC<ControlBarProps> = ({ onAskQuery, isLoading })
     <div className="w-full bg-black border-t border-charcoal p-3 flex flex-col items-center justify-center gap-3">
       {/* Typed Question Input (Collapsible) */}
       {isInputExpanded && (
-        <form onSubmit={handleTextSubmit} className="w-full max-w-[640px] flex items-center gap-2">
-          <input
-            type="text"
-            value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
-            placeholder="Type your question about this video..."
-            autoFocus
-            className="flex-1 bg-black border border-charcoal px-3 py-2 text-sm text-parchment font-mono placeholder-ash focus:border-petal rounded-sm"
-          />
-          <button
-            type="submit"
-            disabled={!textInput.trim() || isLoading}
-            className="px-4 py-2 bg-petal text-black font-mono text-xs font-semibold rounded-sm hover:bg-[#ffbdf9] transition-colors disabled:opacity-40"
-          >
-            ASK
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsInputExpanded(false)}
-            className="px-2 py-2 text-ash hover:text-parchment font-mono text-xs"
-          >
-            ✕
-          </button>
+        <form onSubmit={handleTextSubmit} className="w-full max-w-[640px] flex flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              placeholder="Type your question about this video..."
+              autoFocus
+              className="flex-1 bg-black border border-charcoal px-3 py-2 text-sm text-parchment font-mono placeholder-ash focus:border-petal rounded-sm"
+            />
+            <button
+              type="submit"
+              disabled={!textInput.trim() || isLoading}
+              className="px-4 py-2 bg-petal text-black font-mono text-xs font-semibold rounded-sm hover:bg-[#ffbdf9] transition-colors disabled:opacity-40"
+            >
+              ASK
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsInputExpanded(false);
+                setSpeechStatus(null);
+              }}
+              className="px-2 py-2 text-ash hover:text-parchment font-mono text-xs"
+            >
+              ✕
+            </button>
+          </div>
+          {speechStatus && (
+            <div className="text-[11px] font-mono text-ash flex items-center justify-between px-1">
+              <span>{speechStatus}</span>
+              {textInput && <span className="text-bone">Edit text above before pressing ASK</span>}
+            </div>
+          )}
         </form>
       )}
+
+      {/* Microphone Quality & Mode Indicator Strip */}
+      <div className="w-full max-w-[800px] flex items-center justify-between text-[11px] font-mono px-1">
+        <div className="flex items-center gap-2 text-ash">
+          <span className="w-1.5 h-1.5 rounded-full bg-bone" />
+          <span title="Audio output captured from loudspeaker">Mic capture, lower quality</span>
+        </div>
+        {micQualityLabel && (
+          <div
+            className={`flex items-center gap-1.5 font-bold uppercase transition-all ${
+              micQuality === 'noisy'
+                ? 'text-petal animate-pulse'
+                : micQuality === 'medium'
+                ? 'text-lime'
+                : 'text-bone'
+            }`}
+          >
+            <span>●</span>
+            <span>{micQualityLabel}</span>
+          </div>
+        )}
+      </div>
 
       {/* Main Action Strip */}
       <div className="w-full max-w-[800px] flex items-center justify-between gap-3">

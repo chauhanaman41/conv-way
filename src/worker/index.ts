@@ -195,6 +195,29 @@ app.post('/api/videos/:videoId/init', rateLimiterMiddleware('INIT_TRANSCRIPT'), 
     ipHash,
   });
 
+  if (ingestionResult.captionStatus !== 'READY') {
+    return c.json(
+      {
+        ok: false,
+        error: {
+          code:
+            ingestionResult.captionStatus === 'BUDGET_DEFERRED'
+              ? 'BUDGET_DEFERRED'
+              : 'TRANSCRIPT_UNAVAILABLE',
+          message:
+            ingestionResult.captionStatus === 'BUDGET_DEFERRED'
+              ? 'Daily transcript budget limit reached (5 new transcripts per day).'
+              : 'Captions are unavailable from both primary and fallback providers for this video.',
+          retryable: ingestionResult.captionStatus === 'BUDGET_DEFERRED',
+        },
+        captionStatus: ingestionResult.captionStatus,
+        windowCount: 0,
+        windows: [],
+      },
+      ingestionResult.captionStatus === 'BUDGET_DEFERRED' ? 429 : 404
+    );
+  }
+
   // Pre-warm Window 0 for Way questions in the background
   if (ingestionResult.captionStatus === 'READY' && ingestionResult.windowCount > 0) {
     const wayService = new WayService(c.env);
@@ -210,7 +233,8 @@ app.post('/api/videos/:videoId/init', rateLimiterMiddleware('INIT_TRANSCRIPT'), 
     videoId,
     captionStatus: ingestionResult.captionStatus,
     windowCount: ingestionResult.windowCount,
-    windows: ingestionResult.windows.map((w) => ({
+    transcriptProvider: (ingestionResult as any).provider || 'SUPADATA',
+    windows: (ingestionResult.windows || []).map((w) => ({
       windowIndex: w.windowIndex,
       startSec: w.startSec,
       endSec: w.endSec,
@@ -219,11 +243,109 @@ app.post('/api/videos/:videoId/init', rateLimiterMiddleware('INIT_TRANSCRIPT'), 
   });
 });
 
-// GET /api/videos/:videoId/status
+// Helper to compute next UTC 00:00 ISO string
+function getNextUtcMidnightIso(): string {
+  const tomorrow = new Date();
+  tomorrow.setUTCHours(24, 0, 0, 0);
+  return tomorrow.toISOString();
+}
+
+// GET /api/videos/:videoId/state (One True State API)
+app.get('/api/videos/:videoId/state', async (c) => {
+  const videoId = c.req.param('videoId');
+  if (!videoId) {
+    return c.json({ ok: false, error: { code: 'INVALID_VIDEO_ID', message: 'Missing videoId' } }, 400);
+  }
+
+  if (!c.env.DB) {
+    return c.json({
+      ok: true,
+      status: 'PENDING',
+      captionStatus: 'PENDING',
+      windowCount: 0,
+      language: 'en',
+      provider: 'NONE',
+      reason: null,
+      retryAfter: null,
+      windows: [],
+    });
+  }
+
+  const row = await c.env.DB.prepare(
+    `SELECT caption_status, window_count, language, transcript_provider, duration_sec FROM videos WHERE video_id = ?1`
+  )
+    .bind(videoId)
+    .first<any>();
+
+  if (!row) {
+    return c.json({
+      ok: true,
+      status: 'PENDING',
+      captionStatus: 'PENDING',
+      windowCount: 0,
+      language: 'en',
+      provider: 'NONE',
+      reason: 'Active watch gate requires >= 2.0s of continuous playback.',
+      retryAfter: null,
+      windows: [],
+    });
+  }
+
+  let status: 'READY' | 'PENDING' | 'BUDGET_EXHAUSTED' | 'NO_CAPTIONS' | 'FAILED' = 'PENDING';
+  let reason: string | null = null;
+  let retryAfterVal: string | null = null;
+
+  if (row.caption_status === 'READY') {
+    status = 'READY';
+  } else if (row.caption_status === 'BUDGET_DEFERRED' || row.caption_status === 'BUDGET_EXHAUSTED') {
+    status = 'BUDGET_EXHAUSTED';
+    reason = 'Daily transcript budget limit reached (5 new transcripts per day).';
+    retryAfterVal = getNextUtcMidnightIso();
+  } else if (row.caption_status === 'NO_CAPTIONS') {
+    status = 'NO_CAPTIONS';
+    reason = 'Captions unavailable from transcript providers.';
+  } else if (row.caption_status === 'PROCESSING') {
+    status = 'PENDING';
+    reason = 'Transcript ingestion in progress.';
+  } else {
+    status = 'FAILED';
+    reason = 'Transcript processing failed.';
+  }
+
+  let windows: any[] = [];
+  if (status === 'READY') {
+    const windowsRes = await c.env.DB.prepare(
+      `SELECT window_index as windowIndex, start_sec as startSec, end_sec as endSec, word_count as wordCount
+       FROM transcript_windows WHERE video_id = ?1 ORDER BY window_index ASC`
+    )
+      .bind(videoId)
+      .all<any>();
+    windows = windowsRes.results || [];
+  }
+
+  return c.json({
+    ok: true,
+    status,
+    captionStatus: row.caption_status,
+    windowCount: status === 'READY' ? (row.window_count || windows.length) : 0,
+    language: row.language || 'en',
+    provider: row.transcript_provider || 'NONE',
+    durationSec: row.duration_sec,
+    reason,
+    retryAfter: retryAfterVal,
+    windows,
+  });
+});
+
+// GET /api/videos/:videoId/status (Backwards-compatible alias)
 app.get('/api/videos/:videoId/status', async (c) => {
   const videoId = c.req.param('videoId');
+  if (!videoId) {
+    return c.json({ ok: false, error: { code: 'INVALID_VIDEO_ID', message: 'Missing videoId' } }, 400);
+  }
+
   if (!c.env.DB) {
-    return c.json({ ok: true, videoId, captionStatus: 'PENDING', windowCount: 0 });
+    return c.json({ ok: true, videoId, captionStatus: 'PENDING', windowCount: 0, windows: [] });
   }
 
   const row = await c.env.DB.prepare(
@@ -246,13 +368,21 @@ app.get('/api/videos/:videoId/status', async (c) => {
     );
   }
 
+  const windowsRes = await c.env.DB.prepare(
+    `SELECT window_index as windowIndex, start_sec as startSec, end_sec as endSec, word_count as wordCount FROM transcript_windows WHERE video_id = ?1 ORDER BY window_index ASC`
+  )
+    .bind(videoId)
+    .all<any>();
+
   return c.json({
     ok: true,
     videoId,
     captionStatus: row.caption_status,
+    status: row.caption_status,
     windowCount: row.window_count,
     language: row.language,
     durationSec: row.duration_sec,
+    windows: windowsRes.results || [],
   });
 });
 
@@ -288,8 +418,8 @@ app.get('/api/videos/:videoId/way', async (c) => {
   const wayService = new WayService(c.env);
   const result = await wayService.getQuestionsForWindow(videoId, windowIndex, lang, mode);
 
-  // Set CDN edge cache headers for immutable cached speech windows
-  c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800');
+  // Set CDN edge cache headers for cached speech windows (busted with ?v=2, shortened s-maxage to 300)
+  c.header('Cache-Control', 'public, max-age=60, s-maxage=300');
 
   return c.json({
     ok: true,
@@ -298,6 +428,9 @@ app.get('/api/videos/:videoId/way', async (c) => {
     startSec: result.startSec,
     endSec: result.endSec,
     questions: result.questions,
+    tier: result.tier || 'TIER_A_MODEL',
+    reason: result.reason || null,
+    modelId: result.modelId || null,
   });
 });
 
@@ -511,6 +644,7 @@ app.post('/api/voice/transcribe', rateLimiterMiddleware('VOICE_TRANSCRIBE'), asy
       transcript: result.transcript,
       language,
       durationSec: result.durationSec,
+      confidence: result.confidence,
     });
   } catch (err: any) {
     return c.json(

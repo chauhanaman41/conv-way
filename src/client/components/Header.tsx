@@ -61,7 +61,20 @@ export const Header: React.FC<HeaderProps> = ({ onLogoClick }) => {
         </button>
 
         {/* Center-Right: System Status & Settings Controls */}
-        <div className="flex items-center gap-4 sm:gap-6">
+        <div className="flex items-center gap-3 sm:gap-5">
+          {/* Fast-Track Skip to Live App Button */}
+          <button
+            onClick={() => {
+              const el = document.getElementById('live-workspace');
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="font-mono text-xs text-bone hover:text-petal border border-charcoal hover:border-petal/60 px-2.5 py-1 rounded-sm transition-colors flex items-center gap-1.5"
+            title="Jump directly to Live Video Workspace"
+          >
+            <span>SKIP TO APP</span>
+            <span className="text-petal">↓</span>
+          </button>
+
           {/* Audio Ducking Mode Toggle */}
           <button
             onClick={() => setAudioDuckingMode(audioDuckingMode === 'duck' ? 'pause' : 'duck')}

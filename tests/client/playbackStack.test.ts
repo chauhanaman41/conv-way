@@ -6,13 +6,13 @@ describe('LIFO Playback Call Stack Unit Tests', () => {
     // Reset Zustand store state before each test
     usePlaybackStore.setState({
       currentVideo: {
-        videoId: 'zIwLWfaAg-8',
+        videoId: 'Rni7Fz7208c',
         title: 'Musk x Kamath',
         channelTitle: 'Nikhil Kamath',
-        thumbnailUrl: 'https://i.ytimg.com/vi/zIwLWfaAg-8/hqdefault.jpg',
-        durationSec: 7345,
+        thumbnailUrl: 'https://i.ytimg.com/vi/Rni7Fz7208c/hqdefault.jpg',
+        durationSec: 6846,
         captionStatus: 'READY',
-        windowCount: 28,
+        windowCount: 34,
       },
       currentTime: 1455.0, // 00:24:15
       callStack: [],
@@ -26,7 +26,7 @@ describe('LIFO Playback Call Stack Unit Tests', () => {
     const store = usePlaybackStore.getState();
 
     const clip1: AnswerClip = {
-      videoId: 'zIwLWfaAg-8',
+      videoId: 'Rni7Fz7208c',
       videoTitle: 'Musk x Kamath',
       channelTitle: 'Nikhil Kamath',
       startSec: 1661.0,
@@ -52,7 +52,7 @@ describe('LIFO Playback Call Stack Unit Tests', () => {
     const store = usePlaybackStore.getState();
 
     const clip1: AnswerClip = {
-      videoId: 'zIwLWfaAg-8',
+      videoId: 'Rni7Fz7208c',
       videoTitle: 'Musk x Kamath',
       channelTitle: 'Nikhil Kamath',
       startSec: 1661.0,
@@ -68,7 +68,7 @@ describe('LIFO Playback Call Stack Unit Tests', () => {
     usePlaybackStore.setState({ currentTime: 1690.0 });
 
     const clip2: AnswerClip = {
-      videoId: 'zIwLWfaAg-8',
+      videoId: 'Rni7Fz7208c',
       videoTitle: 'Musk x Kamath',
       channelTitle: 'Nikhil Kamath',
       startSec: 2100.0,
@@ -102,7 +102,7 @@ describe('LIFO Playback Call Stack Unit Tests', () => {
     const store = usePlaybackStore.getState();
 
     const clip: AnswerClip = {
-      videoId: 'zIwLWfaAg-8',
+      videoId: 'Rni7Fz7208c',
       videoTitle: 'Musk x Kamath',
       channelTitle: 'Nikhil Kamath',
       startSec: 1661.0,

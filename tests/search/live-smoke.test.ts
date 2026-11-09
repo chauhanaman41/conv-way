@@ -18,6 +18,6 @@ describe('Live Smoke Tests (Real Provider Keys)', () => {
     expect(['tavily', 'exa']).toContain(response!.provider);
     console.log(`Live Smoke Test Success! Resolved via provider: ${response!.provider}, scope: ${response!.scope}, results: ${response!.results.length}`);
     console.log(`First result: ${response!.results[0].title} (${response!.results[0].url})`);
-  }, 20000);
+  }, 35000);
 });
 

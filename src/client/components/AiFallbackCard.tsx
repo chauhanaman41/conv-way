@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 export interface AiCitation {
   title: string;
   url: string;
   domain?: string;
+  snippet?: string;
 }
 
 export interface AiFallbackData {
@@ -23,6 +24,46 @@ interface AiFallbackCardProps {
 
 export const AiFallbackCard: React.FC<AiFallbackCardProps> = ({ data, onDismiss }) => {
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Keyboard navigation: Escape to dismiss & focus trap
+  useEffect(() => {
+    // Initial focus on close button
+    closeBtnRef.current?.focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onDismiss();
+        return;
+      }
+
+      if (e.key === 'Tab' && cardRef.current) {
+        const focusable = cardRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onDismiss]);
 
   const handlePlayAudio = () => {
     if (!data.ttsAudioBase64) return;
@@ -38,84 +79,115 @@ export const AiFallbackCard: React.FC<AiFallbackCardProps> = ({ data, onDismiss 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-black border border-charcoal p-6 space-y-5">
-        {/* Verification Badge */}
-        <div className="flex items-center justify-between border-b border-charcoal pb-3">
-          <div className="flex items-center gap-2">
+    <div
+      ref={cardRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Verified Answer"
+      className={`
+        bg-black border border-charcoal shadow-2xl p-4
+        /* Mobile (390px): bottom sheet with handle */
+        fixed inset-x-0 bottom-0 z-50 rounded-t-xl sm:rounded-none
+        /* Desktop: docked bottom-right of player area, max-w-[360px], never covers Way panel */
+        lg:absolute lg:bottom-4 lg:right-4 lg:inset-auto lg:z-40 lg:w-[360px] lg:rounded-sm
+      `}
+    >
+      {/* Mobile Top Drag / Close Handle */}
+      <div
+        onClick={onDismiss}
+        className="w-10 h-1 bg-charcoal rounded-full mx-auto mb-2 cursor-pointer hover:bg-ash transition-colors lg:hidden"
+        title="Tap to dismiss"
+      />
+
+      {/* Header Bar */}
+      <div className="flex items-center justify-between border-b border-charcoal/80 pb-2 mb-2.5">
+        <div className="flex items-center gap-2">
+          {data.isAiLabeled ? (
             <span className="font-mono text-[10px] px-2 py-0.5 bg-petal text-black font-bold uppercase rounded-sm">
-              AI VERIFIED FALLBACK
+              AI SYNTHESIS
             </span>
-            <span className="font-mono text-[11px] text-ash">
-              {data.wordCount} WORDS
+          ) : (
+            <span className="font-mono text-[10px] px-2 py-0.5 bg-lime text-black font-bold uppercase rounded-sm">
+              VERIFIED SOURCES
             </span>
-          </div>
-          <button
-            onClick={onDismiss}
-            className="text-ash hover:text-parchment font-mono text-xs focus:outline-none"
-          >
-            ✕
-          </button>
+          )}
+          {data.wordCount > 0 && (
+            <span className="font-mono text-[10px] text-ash tracking-wide" data-testid="word-count-badge">
+              {data.wordCount} words
+            </span>
+          )}
         </div>
 
-        {/* Fallback Reason / Grounding Note */}
-        <p className="font-mono text-xs text-bone italic">
-          "{data.reason}"
-        </p>
+        <button
+          ref={closeBtnRef}
+          onClick={onDismiss}
+          className="text-ash hover:text-petal font-mono text-xs px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-petal rounded"
+          aria-label="Close"
+          title="Close (Esc)"
+        >
+          ✕
+        </button>
+      </div>
 
-        {/* Synthesized Grounded Answer */}
-        <div className="p-4 border border-charcoal bg-black/40">
-          <p className="font-sans text-sm sm:text-base text-parchment leading-relaxed font-medium">
+      {/* Grounding Reason Strip */}
+      <p className="font-mono text-[11px] text-bone/90 mb-2 truncate" title={data.reason}>
+        {data.reason}
+      </p>
+
+      {/* Cleaned Answer / Summary Text - Strictly 20-30 words (no-model) or 30-40 words (AI); No Scroll Required */}
+      {data.answerText && (
+        <div className="p-2.5 border border-charcoal/60 bg-obsidian rounded-sm mb-2.5">
+          <p className="font-sans text-xs sm:text-sm text-parchment leading-relaxed font-normal">
             {data.answerText}
           </p>
         </div>
+      )}
 
-        {/* Real Source Citations */}
-        {data.citations && data.citations.length > 0 && (
-          <div className="space-y-1.5 pt-1">
-            <span className="font-mono text-[10px] uppercase text-ash tracking-wider block">
-              VERIFIED SOURCES
-            </span>
-            <div className="flex flex-col gap-1.5">
-              {data.citations.map((cite, i) => (
-                <a
-                  key={i}
-                  href={cite.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-mono text-xs text-petal hover:underline truncate flex items-center gap-1.5"
-                >
-                  <span>↗</span>
-                  <span className="truncate">{cite.title || cite.url}</span>
-                </a>
-              ))}
+      {/* Source Links (1 or 2 citations, clean domain pills) */}
+      {data.citations && data.citations.length > 0 && (
+        <div className="space-y-1.5 mb-2.5">
+          {data.citations.slice(0, 2).map((cite, i) => (
+            <div key={i} className="flex items-center justify-between text-[11px] font-mono gap-2">
+              <a
+                href={cite.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-petal hover:underline truncate flex items-center gap-1 focus:outline-none focus:ring-1 focus:ring-petal"
+              >
+                <span>↗</span>
+                <span className="truncate">{cite.title || cite.url}</span>
+              </a>
+              {cite.domain && (
+                <span className="text-[9px] text-ash bg-charcoal/60 px-1.5 py-0.2 rounded shrink-0">
+                  {cite.domain}
+                </span>
+              )}
             </div>
-          </div>
+          ))}
+        </div>
+      )}
+
+      {/* Action Strip */}
+      <div className="flex items-center justify-between pt-2 border-t border-charcoal/60">
+        {data.ttsAudioBase64 ? (
+          <button
+            onClick={handlePlayAudio}
+            disabled={isPlayingAudio}
+            className="px-2.5 py-1 border border-charcoal font-mono text-[11px] text-parchment hover:border-petal rounded-sm flex items-center gap-1.5 focus:outline-none focus:ring-1 focus:ring-petal"
+          >
+            <span>{isPlayingAudio ? '🔊 PLAYING...' : '▶ LISTEN'}</span>
+          </button>
+        ) : (
+          <span className="font-mono text-[10px] text-ash">VIDEO PAUSED</span>
         )}
 
-        {/* Actions Bar */}
-        <div className="flex items-center justify-between gap-3 pt-3 border-t border-charcoal">
-          {data.ttsAudioBase64 ? (
-            <button
-              onClick={handlePlayAudio}
-              disabled={isPlayingAudio}
-              className="px-3 py-2 border border-charcoal font-mono text-xs text-parchment hover:border-bone rounded-sm flex items-center gap-2 focus:outline-none"
-            >
-              <span>{isPlayingAudio ? '🔊 PLAYING...' : '▶ LISTEN (TIMBRE)'}</span>
-            </button>
-          ) : (
-            <div />
-          )}
-
-          <button
-            onClick={onDismiss}
-            className="px-5 py-2.5 rounded-full bg-petal text-black font-mono text-xs font-semibold hover:bg-[#ffbdf9] transition-colors focus:outline-none"
-          >
-            RETURN TO VIDEO
-          </button>
-        </div>
+        <button
+          onClick={onDismiss}
+          className="px-3 py-1 bg-parchment text-black font-mono text-xs font-semibold hover:bg-bone rounded-sm focus:outline-none focus:ring-1 focus:ring-petal"
+        >
+          DISMISS
+        </button>
       </div>
     </div>
   );
 };
-

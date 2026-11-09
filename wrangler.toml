@@ -6,6 +6,9 @@ compatibility_flags = ["nodejs_compat"]
 # Cloudflare Worker Static Assets (serves Vite SPA from edge CDN)
 assets = { directory = "./dist", binding = "ASSETS", not_found_handling = "single-page-application" }
 
+[ai]
+binding = "AI"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "conv-way-db"
@@ -39,3 +42,8 @@ GOOGLE_CSE_ENABLED = "true"
 GOOGLE_CSE_SUNSET = "2027-01-01"
 GOOGLE_CSE_DAILY_CAP = "90"
 SEARCH_CACHE_TTL_DAYS = "7"
+
+# LLM Configuration (Workers AI Primary, Evon Secondary)
+LLM_WORKERS_AI_ENABLED = "true"
+LLM_PROVIDER_ORDER = "workers_ai,evon"
+WORKERS_AI_MODEL = "@cf/meta/llama-3.2-3b-instruct"

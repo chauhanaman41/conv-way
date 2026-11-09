@@ -23,6 +23,13 @@ export interface StackEntry {
   createdAt: string;
 }
 
+export interface PlaybackWindow {
+  windowIndex: number;
+  startSec: number;
+  endSec: number;
+  wordCount?: number;
+}
+
 export interface VideoMetadata {
   videoId: string;
   title: string;
@@ -31,6 +38,10 @@ export interface VideoMetadata {
   durationSec: number;
   captionStatus: 'READY' | 'NO_CAPTIONS' | 'BUDGET_DEFERRED' | 'PENDING' | 'PROCESSING';
   windowCount: number;
+  transcriptProvider?: string;
+  language?: string;
+  retryAfter?: string | null;
+  statusReason?: string | null;
 }
 
 export interface HandBackState {
@@ -53,6 +64,7 @@ interface PlaybackState {
   // 2-second watch gate accumulator
   activeWatchedSeconds: number;
   isInitialized: boolean;
+  windows: PlaybackWindow[];
 
   // LIFO Call Stack for non-linear exploration
   callStack: StackEntry[];
@@ -71,6 +83,7 @@ interface PlaybackState {
 
   // Actions
   setCurrentVideo: (video: VideoMetadata) => void;
+  setWindows: (windows: PlaybackWindow[]) => void;
   setPlayerRef: (ref: any) => void;
   setPipPlayerRef: (ref: any) => void;
   updatePlayhead: (currentTime: number, isPlaying: boolean) => void;
@@ -84,6 +97,7 @@ interface PlaybackState {
   showHandBack: (questionText: string, clip: AnswerClip, returnTimestamp: number, clarification?: string) => void;
   dismissHandBack: () => void;
   closePip: () => void;
+  syncVideoState: (videoId: string) => Promise<void>;
 }
 
 const STORAGE_KEY = 'conv_way_playback_stack';
@@ -113,6 +127,7 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
 
   activeWatchedSeconds: 0,
   isInitialized: false,
+  windows: [],
 
   callStack: loadStackFromSession(),
   activeAnswerClip: null,
@@ -129,7 +144,8 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
       durationSec: video.durationSec,
       currentTime: 0,
       activeWatchedSeconds: 0,
-      isInitialized: video.captionStatus === 'READY',
+      isInitialized: video.captionStatus === 'READY' && video.windowCount > 0,
+      windows: [],
       callStack: [],
       activeAnswerClip: null,
       activeHandBack: { isShowing: false, questionText: '', returnTimestamp: 0 },
@@ -137,7 +153,40 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
       pipVideo: null,
     });
     sessionStorage.removeItem(STORAGE_KEY);
+
+    // Fetch the unified truth state from D1
+    get().syncVideoState(video.videoId);
   },
+
+  syncVideoState: async (videoId: string) => {
+    try {
+      const res = await fetch(`/api/videos/${videoId}/state`);
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        const cur = get().currentVideo;
+        if (cur && cur.videoId === videoId) {
+          const isReady = data.status === 'READY';
+          set({
+            windows: data.windows || [],
+            isInitialized: isReady && (data.windowCount > 0 || (data.windows && data.windows.length > 0)),
+            currentVideo: {
+              ...cur,
+              captionStatus: data.status === 'BUDGET_EXHAUSTED' ? 'BUDGET_DEFERRED' : data.status,
+              windowCount: data.windowCount || 0,
+              transcriptProvider: data.provider || cur.transcriptProvider || 'NONE',
+              language: data.language || cur.language || 'en',
+              retryAfter: data.retryAfter || null,
+              statusReason: data.reason || null,
+            },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[playbackStore] syncVideoState error:', e);
+    }
+  },
+
+  setWindows: (windows) => set({ windows }),
 
   setPlayerRef: (ref) => set({ playerRef: ref }),
   setPipPlayerRef: (ref) => set({ pipPlayerRef: ref }),
@@ -218,6 +267,7 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
       }
       set({
         callStack: nextStack,
+        currentTime: clip.startSec,
         activeAnswerClip: clip,
         isPipActive: false,
         pipVideo: null,
@@ -251,6 +301,7 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
 
     set({
       callStack: nextStack,
+      currentTime: topEntry.returnTimestamp,
       activeAnswerClip: nextStack.length > 0 ? nextStack[nextStack.length - 1].answerClip : null,
       activeHandBack: { isShowing: false, questionText: '', returnTimestamp: 0 },
       isPipActive: false,
@@ -278,6 +329,7 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
 
     set({
       callStack: [],
+      currentTime: rootEntry.returnTimestamp,
       activeAnswerClip: null,
       activeHandBack: { isShowing: false, questionText: '', returnTimestamp: 0 },
       isPipActive: false,

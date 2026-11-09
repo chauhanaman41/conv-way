@@ -1,0 +1,60 @@
+Implementation Snippet: Animating Frames 6, 7 & 8 as an 8-FPS Construction GIF Component
+Save all 9 images into /public/assets/showcase/ using the filenames above. To run the 3 construction frames (06, 07, 08) as a zero-dependency, GIF-style kinetic loop in Section 05 // UNDER CONSTRUCTION, use this React component:
+
+TypeScript
+import React, { useEffect, useState } from 'react';
+
+const CONSTRUCTION_FRAMES = [
+  {
+    src: '/assets/showcase/06-construction-gif-frame-1-survey.png',
+    label: 'FRAME 01 // HOISTING TRANSCRIPT ADAPTER MODULE',
+  },
+  {
+    src: '/assets/showcase/07-construction-gif-frame-2-welding.png',
+    label: 'FRAME 02 // WELDING YOUTUBE QUOTA & PIP BOUNDARIES',
+  },
+  {
+    src: '/assets/showcase/08-construction-gif-frame-3-calibration.png',
+    label: 'FRAME 03 // CALIBRATING GNANI CREDIT GOVERNOR',
+  },
+];
+
+export function UnderConstructionGifStage() {
+  const [frameIndex, setFrameIndex] = useState(0);
+
+  useEffect(() => {
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) return;
+
+    const interval = setInterval(() => {
+      setFrameIndex((prev) => (prev + 1) % CONSTRUCTION_FRAMES.length);
+    }, 450); // Stepped editorial frame cadence
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const currentFrame = CONSTRUCTION_FRAMES[frameIndex];
+
+  return (
+    <figure className="w-full bg-black border border-[#605c56]">
+      <div className="relative w-full aspect-video overflow-hidden bg-black">
+        <img
+          src={currentFrame.src}
+          alt={currentFrame.label}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+        <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/90 border border-[#605c56] px-3 py-1.5 rounded-full">
+          <span className="w-2 h-2 rounded-full bg-[#4dff00]" />
+          <span className="font-mono text-[12px] tracking-tight text-[#efe6d8]">
+            WIP // ACTIVE BUILD LOOP [{frameIndex + 1}/3]
+          </span>
+        </div>
+      </div>
+      <figcaption className="flex items-center justify-between px-4 py-3 border-t border-[#605c56] font-mono text-[13px] text-[#aca69c]">
+        <span>{currentFrame.label}</span>
+        <span className="text-[#ffa1f7]">KNOWN_ISSUES.MD SYNCED</span>
+      </figcaption>
+    </figure>
+  );
+}

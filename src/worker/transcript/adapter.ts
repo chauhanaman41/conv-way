@@ -14,7 +14,10 @@ export class TranscriptAdapter {
   private primaryProvider: ITranscriptProvider;
   private fallbackProvider: ITranscriptProvider;
   private db?: D1Database;
-  private inFlightMap = new Map<string, Promise<{ captionStatus: string; windowCount: number }>>();
+  private inFlightMap = new Map<
+    string,
+    Promise<{ captionStatus: string; windowCount: number; windows: SpeechWindow[]; provider?: string }>
+  >();
 
   constructor(options: {
     supadataKey?: string;
@@ -123,10 +126,10 @@ export class TranscriptAdapter {
     const inFlightKey = `${videoId}:${language}`;
     if (this.inFlightMap.has(inFlightKey)) {
       const inFlight = await this.inFlightMap.get(inFlightKey)!;
-      return { captionStatus: inFlight.captionStatus, windowCount: inFlight.windowCount, windows: [] };
+      return inFlight;
     }
 
-    const task = (async () => {
+    const task = (async (): Promise<{ captionStatus: string; windowCount: number; windows: SpeechWindow[]; provider?: string }> => {
       // 3. Check daily budget (5 new transcripts/day)
       const budget = await this.checkDailyBudget();
       if (!budget.allowed) {
@@ -147,7 +150,7 @@ export class TranscriptAdapter {
             )
             .run();
         }
-        return { captionStatus: 'BUDGET_DEFERRED', windowCount: 0 };
+        return { captionStatus: 'BUDGET_DEFERRED', windowCount: 0, windows: [] };
       }
 
       // 4. Fetch transcript: Primary (Supadata) -> Fallback (TranscriptAPI)
@@ -159,7 +162,11 @@ export class TranscriptAdapter {
         fetchResult = await this.primaryProvider.fetchTranscript(videoId, language);
         usedProvider = this.primaryProvider.name;
         const latency = Date.now() - startMs;
-        await this.incrementDailyTranscripts(usedProvider, latency, ipHash);
+        if (fetchResult && fetchResult.cues && fetchResult.cues.length > 0) {
+          await this.incrementDailyTranscripts(usedProvider, latency, ipHash);
+        } else {
+          throw new Error('Supadata returned 0 cues');
+        }
       } catch (primaryErr: any) {
         console.warn(`[TranscriptAdapter] Primary Supadata failed for ${videoId}:`, primaryErr.message);
         try {
@@ -167,7 +174,11 @@ export class TranscriptAdapter {
           fetchResult = await this.fallbackProvider.fetchTranscript(videoId, language);
           usedProvider = this.fallbackProvider.name;
           const latency = Date.now() - fallbackStart;
-          await this.incrementDailyTranscripts(usedProvider, latency, ipHash);
+          if (fetchResult && fetchResult.cues && fetchResult.cues.length > 0) {
+            await this.incrementDailyTranscripts(usedProvider, latency, ipHash);
+          } else {
+            throw new Error('TranscriptAPI returned 0 cues');
+          }
         } catch (fallbackErr: any) {
           console.error(`[TranscriptAdapter] Both transcript providers failed for ${videoId}:`, fallbackErr.message);
           if (this.db) {
@@ -186,7 +197,7 @@ export class TranscriptAdapter {
               )
               .run();
           }
-          return { captionStatus: 'NO_CAPTIONS', windowCount: 0 };
+          return { captionStatus: 'NO_CAPTIONS', windowCount: 0, windows: [] };
         }
       }
 
@@ -232,13 +243,18 @@ export class TranscriptAdapter {
         }
       }
 
-      return { captionStatus: 'READY', windowCount: windows.length };
+      return {
+        captionStatus: 'READY',
+        windowCount: windows.length,
+        windows,
+        provider: usedProvider,
+      };
     })();
 
     this.inFlightMap.set(inFlightKey, task);
     try {
       const res = await task;
-      return { ...res, windows: [] };
+      return res;
     } finally {
       this.inFlightMap.delete(inFlightKey);
     }

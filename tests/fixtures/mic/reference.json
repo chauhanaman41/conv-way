@@ -1,0 +1,101 @@
+{
+  "version": "1.0",
+  "description": "Phone loudspeaker capture test set across volume levels and acoustic noise environments",
+  "sentences": [
+    {
+      "id": "clip_01",
+      "text": "Starlink satellites operate in low Earth orbit to provide broadband internet.",
+      "durationSec": 4.5,
+      "phonemeCount": 68
+    },
+    {
+      "id": "clip_02",
+      "text": "Reusable rockets significantly reduce the cost of access to orbit.",
+      "durationSec": 4.2,
+      "phonemeCount": 60
+    },
+    {
+      "id": "clip_03",
+      "text": "Artificial intelligence systems require high performance compute clusters.",
+      "durationSec": 4.8,
+      "phonemeCount": 72
+    },
+    {
+      "id": "clip_04",
+      "text": "The battery pack provides electrical power to the dual electric motors.",
+      "durationSec": 4.4,
+      "phonemeCount": 64
+    },
+    {
+      "id": "clip_05",
+      "text": "Solar energy generation has increased substantially over the past decade.",
+      "durationSec": 4.6,
+      "phonemeCount": 66
+    },
+    {
+      "id": "clip_06",
+      "text": "Optical space lasers enable high speed inter satellite communication.",
+      "durationSec": 4.5,
+      "phonemeCount": 65
+    },
+    {
+      "id": "clip_07",
+      "text": "Autonomous vehicles rely on vision neural networks and real time inference.",
+      "durationSec": 5.1,
+      "phonemeCount": 76
+    },
+    {
+      "id": "clip_08",
+      "text": "Global supply chains depend on efficient maritime freight transportation.",
+      "durationSec": 4.7,
+      "phonemeCount": 69
+    },
+    {
+      "id": "clip_09",
+      "text": "Quantum computing explores novel cryptographic algorithms and materials science.",
+      "durationSec": 5.0,
+      "phonemeCount": 74
+    },
+    {
+      "id": "clip_10",
+      "text": "Renewable power grids balance variable wind generation with energy storage.",
+      "durationSec": 4.6,
+      "phonemeCount": 67
+    }
+  ],
+  "volumeLevels": {
+    "low": {
+      "gainDb": -12,
+      "gainLinear": 0.25,
+      "description": "Phone speaker at ~30% volume (~52 dBA at 15cm)"
+    },
+    "medium": {
+      "gainDb": -6,
+      "gainLinear": 0.50,
+      "description": "Phone speaker at ~65% volume (~64 dBA at 15cm)"
+    },
+    "high": {
+      "gainDb": 0,
+      "gainLinear": 1.00,
+      "description": "Phone speaker at 100% volume (~76 dBA at 15cm)"
+    }
+  },
+  "noiseEnvironments": {
+    "quiet": {
+      "snrDb": 26,
+      "ambientDba": 32,
+      "description": "Quiet living room or private office with minimal ambient sound"
+    },
+    "fan": {
+      "snrDb": 12,
+      "ambientDba": 55,
+      "description": "Room with ceiling fan or air conditioner running (pink/brown noise 100-500 Hz)"
+    },
+    "traffic": {
+      "snrDb": 5,
+      "ambientDba": 68,
+      "description": "City apartment with open window near road traffic (low rumble, intermittent tires)"
+    }
+  }
+}
+

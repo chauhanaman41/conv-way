@@ -46,7 +46,7 @@ export class GoogleCseProvider implements SearchProvider {
     }
 
     const maxResults = Math.min(options?.maxResults || 5, 10);
-    const timeoutMs = options?.timeoutMs || 8000;
+    const timeoutMs = options?.timeoutMs || 3500;
 
     const url = new URL('https://customsearch.googleapis.com/customsearch/v1');
     url.searchParams.set('key', this.apiKey!);
@@ -68,10 +68,6 @@ export class GoogleCseProvider implements SearchProvider {
         return response;
       } catch (err: any) {
         clearTimeout(timer);
-        if (!isRetry && (err.name === 'AbortError' || err.message?.includes('timeout'))) {
-          // Retry once on timeout
-          return executeFetch(true);
-        }
         throw err;
       }
     };

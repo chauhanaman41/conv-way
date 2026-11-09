@@ -135,34 +135,71 @@ export class YouTubeDiscoveryService {
       }
     }
 
-    // 2. Fetch from YouTube Data API v3
-    if (!this.apiKey) {
-      throw new Error('YOUTUBE_DATA_API_KEY is not configured');
+    // 2. Fetch from YouTube Data API v3, falling back to public YouTube oEmbed if key is invalid
+    let title = '';
+    let channelTitle = '';
+    let channelId: string | undefined = undefined;
+    let thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    let durationSec = 0;
+    let language = 'en';
+
+    let resolvedViaApi = false;
+    if (this.apiKey) {
+      try {
+        const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${this.apiKey}`;
+        const res = await fetch(apiUrl);
+        if (res.ok) {
+          const data = (await res.json()) as any;
+          const item = data.items?.[0];
+          if (item) {
+            title = item.snippet.title;
+            channelTitle = item.snippet.channelTitle;
+            channelId = item.snippet.channelId;
+            thumbnailUrl =
+              item.snippet.thumbnails?.high?.url ||
+              item.snippet.thumbnails?.medium?.url ||
+              item.snippet.thumbnails?.default?.url ||
+              thumbnailUrl;
+            durationSec = YouTubeDiscoveryService.parseIsoDuration(item.contentDetails?.duration || 'PT0S');
+            language = item.snippet.defaultAudioLanguage || item.snippet.defaultLanguage || 'en';
+            resolvedViaApi = true;
+          }
+        } else {
+          const errText = await res.text();
+          console.warn(`[YouTubeDiscovery] YouTube Data API returned HTTP ${res.status}:`, errText);
+        }
+      } catch (e: any) {
+        console.warn('[YouTubeDiscovery] YouTube Data API fetch error:', e.message);
+      }
     }
 
-    const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${this.apiKey}`;
-    const res = await fetch(apiUrl);
-    if (!res.ok) {
-      throw new Error(`YouTube API returned HTTP ${res.status}`);
+    // Fallback to YouTube oEmbed (key-less public resolver) if Data API failed
+    if (!resolvedViaApi) {
+      try {
+        const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+        const oembedRes = await fetch(oembedUrl);
+        if (oembedRes.ok) {
+          const oembedData = (await oembedRes.json()) as any;
+          title = oembedData.title || `YouTube Video ${videoId}`;
+          channelTitle = oembedData.author_name || 'YouTube Creator';
+          thumbnailUrl = oembedData.thumbnail_url || thumbnailUrl;
+        } else {
+          return null;
+        }
+      } catch {
+        return null;
+      }
     }
-
-    const data = await res.json() as any;
-    const item = data.items?.[0];
-    if (!item) return null;
 
     const metadata: VideoMetadata = {
       videoId,
-      title: item.snippet.title,
-      channelTitle: item.snippet.channelTitle,
-      channelId: item.snippet.channelId,
-      thumbnailUrl:
-        item.snippet.thumbnails?.high?.url ||
-        item.snippet.thumbnails?.medium?.url ||
-        item.snippet.thumbnails?.default?.url ||
-        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      durationSec: YouTubeDiscoveryService.parseIsoDuration(item.contentDetails?.duration || 'PT0S'),
+      title,
+      channelTitle,
+      channelId,
+      thumbnailUrl,
+      durationSec,
       captionStatus: 'PENDING',
-      language: item.snippet.defaultAudioLanguage || item.snippet.defaultLanguage || 'en',
+      language,
       windowCount: 0,
     };
 
@@ -195,27 +232,40 @@ export class YouTubeDiscoveryService {
    * Returns Top 20 trending videos, using KV cache or fetching live via YouTube API.
    */
   async getTrending(): Promise<{ videos: VideoMetadata[]; updatedAt: string }> {
-    const cacheKey = 'trending:top20:global';
+    const cacheKey = 'trending:top20:v2';
 
     // 1. Try KV cache
     if (this.env.KV) {
       try {
         const cached = await this.env.KV.get<{ videos: VideoMetadata[]; updatedAt: string }>(cacheKey, 'json');
         if (cached && cached.videos && cached.videos.length > 0) {
-          // Reconcile captionStatus from D1
+          // Reconcile captionStatus, windowCount and language from D1
           if (this.env.DB) {
-            const statusMap = new Map<string, string>();
+            const metaMap = new Map<string, { status: string; windowCount: number; language?: string }>();
             const idList = cached.videos.map((v) => `'${v.videoId}'`).join(',');
-            const rows = await this.env.DB.prepare(
-              `SELECT video_id, caption_status, window_count FROM videos WHERE video_id IN (${idList})`
-            ).all<{ video_id: string; caption_status: string; window_count: number }>();
-            rows.results.forEach((r) => statusMap.set(r.video_id, r.caption_status));
+            if (idList.length > 0) {
+              const rows = await this.env.DB.prepare(
+                `SELECT video_id, caption_status, window_count, language FROM videos WHERE video_id IN (${idList})`
+              ).all<{ video_id: string; caption_status: string; window_count: number; language?: string }>();
+              rows.results.forEach((r) =>
+                metaMap.set(r.video_id, {
+                  status: r.caption_status,
+                  windowCount: r.window_count,
+                  language: r.language,
+                })
+              );
 
-            const updatedVideos = cached.videos.map((v) => ({
-              ...v,
-              captionStatus: (statusMap.get(v.videoId) as any) || v.captionStatus,
-            }));
-            return { videos: updatedVideos, updatedAt: cached.updatedAt };
+              const updatedVideos = cached.videos.map((v) => {
+                const d1 = metaMap.get(v.videoId);
+                return {
+                  ...v,
+                  captionStatus: (d1?.status as any) || v.captionStatus,
+                  windowCount: d1 ? d1.windowCount : (v.windowCount ?? 0),
+                  language: d1?.language || v.language || 'en',
+                };
+              });
+              return { videos: updatedVideos, updatedAt: cached.updatedAt };
+            }
           }
           return cached;
         }
@@ -273,19 +323,32 @@ export class YouTubeDiscoveryService {
       }
     }
 
-    // Always ensure the reference Episode 16 Musk x Kamath video is present in trending
-    const referenceId = 'zIwLWfaAg-8';
-    if (!videos.some((v) => v.videoId === referenceId)) {
-      videos.unshift({
-        videoId: referenceId,
-        title: 'WTF is with Elon Musk? | Nikhil Kamath | People by WTF Ep 16',
-        channelTitle: 'Nikhil Kamath',
-        thumbnailUrl: `https://i.ytimg.com/vi/${referenceId}/hqdefault.jpg`,
-        durationSec: 7345,
-        captionStatus: 'READY',
-        language: 'en',
-        windowCount: 28,
-      });
+    // If live search returned no videos (e.g. API key unavailable/quota reached), read indexed videos from D1
+    if (videos.length === 0 && this.env.DB) {
+      try {
+        const d1Videos = await this.env.DB.prepare(
+          `SELECT video_id, title, channel_title, channel_id, thumbnail_url, duration_sec, caption_status, language, window_count
+           FROM videos
+           ORDER BY access_count DESC, created_at DESC
+           LIMIT 20`
+        ).all<any>();
+
+        for (const row of d1Videos.results || []) {
+          videos.push({
+            videoId: row.video_id,
+            title: row.title,
+            channelTitle: row.channel_title,
+            channelId: row.channel_id || undefined,
+            thumbnailUrl: row.thumbnail_url || `https://i.ytimg.com/vi/${row.video_id}/hqdefault.jpg`,
+            durationSec: row.duration_sec,
+            captionStatus: row.caption_status,
+            language: row.language,
+            windowCount: row.window_count,
+          });
+        }
+      } catch (e: any) {
+        console.warn('[YouTubeDiscovery] D1 trending fallback error:', e.message);
+      }
     }
 
     // Seed or update D1 videos table

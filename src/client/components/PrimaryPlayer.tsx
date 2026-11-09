@@ -30,6 +30,11 @@ export const PrimaryPlayer: React.FC<PrimaryPlayerProps> = ({ onVideoInitSuccess
   useEffect(() => {
     if (!currentVideo) return;
 
+    // If video is already indexed, fetch windows if not yet loaded
+    if (usePlaybackStore.getState().windows.length === 0) {
+      usePlaybackStore.getState().syncVideoState(currentVideo.videoId);
+    }
+
     // Load YouTube IFrame Player API if not already present
     const loadApi = () => {
       if (window.YT && window.YT.Player) {
@@ -70,6 +75,21 @@ export const PrimaryPlayer: React.FC<PrimaryPlayerProps> = ({ onVideoInitSuccess
         events: {
           onReady: (event: any) => {
             setPlayerRef(event.target);
+            if (typeof event.target.getVideoData === 'function') {
+              const videoData = event.target.getVideoData();
+              if (videoData && videoData.title) {
+                const current = usePlaybackStore.getState().currentVideo;
+                if (current && (!current.title || current.title.startsWith('YouTube Video'))) {
+                  usePlaybackStore.setState({
+                    currentVideo: {
+                      ...current,
+                      title: videoData.title,
+                      channelTitle: videoData.author || current.channelTitle,
+                    },
+                  });
+                }
+              }
+            }
             startPolling(event.target);
           },
           onStateChange: (event: any) => {
@@ -111,7 +131,7 @@ export const PrimaryPlayer: React.FC<PrimaryPlayerProps> = ({ onVideoInitSuccess
                 body: JSON.stringify({
                   watchedSeconds: accumulated,
                   currentPlayheadSec: time,
-                  language: currentVideo.captionStatus === 'READY' ? 'en' : 'en',
+                  language: currentVideo.language || 'en',
                   title: currentVideo.title,
                   channelTitle: currentVideo.channelTitle,
                   durationSec: currentVideo.durationSec,
@@ -119,9 +139,37 @@ export const PrimaryPlayer: React.FC<PrimaryPlayerProps> = ({ onVideoInitSuccess
               });
 
               if (res.ok) {
-                const data = await res.json() as any;
+                const data = (await res.json()) as any;
+                const cur = usePlaybackStore.getState().currentVideo;
+                if (cur) {
+                  usePlaybackStore.setState({
+                    currentVideo: {
+                      ...cur,
+                      captionStatus: data.captionStatus,
+                      windowCount: data.windowCount || 0,
+                      transcriptProvider: data.transcriptProvider || 'SUPADATA',
+                      language: data.language || cur.language || 'en',
+                    },
+                    windows: data.windows || [],
+                  });
+                }
                 if (onVideoInitSuccess) {
                   onVideoInitSuccess(data.windowCount || 0);
+                }
+                // Double-check sync
+                usePlaybackStore.getState().syncVideoState(currentVideo.videoId);
+              } else {
+                const errData = (await res.json().catch(() => ({}))) as any;
+                console.warn('[PrimaryPlayer] Video init failed:', errData);
+                const cur = usePlaybackStore.getState().currentVideo;
+                if (cur) {
+                  usePlaybackStore.setState({
+                    currentVideo: {
+                      ...cur,
+                      captionStatus: errData?.error?.code === 'BUDGET_DEFERRED' ? 'BUDGET_DEFERRED' : 'NO_CAPTIONS',
+                      statusReason: errData?.error?.message || null,
+                    },
+                  });
                 }
               }
             } catch (err) {

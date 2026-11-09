@@ -17,7 +17,7 @@ export class PrismaClient {
     audioBytes: ArrayBuffer | Uint8Array,
     mimeType = 'audio/webm',
     language = 'en-IN'
-  ): Promise<{ transcript: string; durationSec: number }> {
+  ): Promise<{ transcript: string; durationSec: number; confidence?: number }> {
     if (!this.isAvailable()) {
       throw new Error('Gnani Prisma API key is not configured.');
     }
@@ -60,10 +60,12 @@ export class PrismaClient {
       const data: any = await response.json();
       const transcript = (data.transcript || data.text || data.transcription || '').trim();
       const durationSec = typeof data.duration === 'number' ? data.duration : parseFloat(data.duration) || 0;
+      const confidence = typeof data.confidence === 'number' ? data.confidence : typeof data.score === 'number' ? data.score : undefined;
 
       return {
         transcript,
         durationSec,
+        confidence,
       };
     } catch (err: any) {
       clearTimeout(timer);

@@ -125,33 +125,10 @@ ${window.plainText}`;
         }
       }
     } catch (e: any) {
-      console.warn('[EvonClient] predictWayQuestions error, falling back to heuristic parsing:', e.message);
+      console.warn('[EvonClient] predictWayQuestions error:', e.message);
     }
 
-    // Heuristic fallback: synthesize 4-6 questions from transcript sentences if upstream is unavailable
-    return this.synthesizeHeuristicQuestions(window, cues);
-  }
-
-  private synthesizeHeuristicQuestions(window: SpeechWindow, cues: WindowCueCompact[]): EvonWayPrediction {
-    const questions: EvonWayPrediction['questions'] = [];
-    if (cues.length === 0) return { questions: [] };
-
-    const step = Math.max(1, Math.floor(cues.length / 5));
-    for (let i = 0; i < cues.length && questions.length < 5; i += step) {
-      const cue = cues[i];
-      const nextCue = cues[Math.min(i + 3, cues.length - 1)];
-      const words = cue.w.split(' ').slice(0, 8).join(' ');
-
-      questions.push({
-        questionText: `What does the speaker explain regarding: "${words}..."?`,
-        triggerSec: cue.t,
-        answerStartSec: cue.t,
-        answerEndSec: Math.max(cue.t + 20, nextCue.t + nextCue.d),
-        confidenceScore: 0.85,
-      });
-    }
-
-    return { questions };
+    return { questions: [] };
   }
 
   /**
@@ -276,20 +253,8 @@ Snippet: ${r.snippet || r.content}`
       console.warn('[EvonClient] generateCitedFallback error:', e.message);
     }
 
-    // Heuristic fallback: synthesize compliant 34-word answer from first search snippet
-    const firstResult = searchResults[0];
-    const snippetWords = (firstResult.snippet || firstResult.title).split(/\s+/).slice(0, 25).join(' ');
-    const answer = `According to verified documentation from ${firstResult.title}, current published specifications establish that ${snippetWords}; official updates continue as regulatory authorizations proceed.`;
-    const words = answer.split(/\s+/);
-    // Adjust to exactly 34 words
-    const finalAnswer = words.slice(0, 34).join(' ') + '.';
-
-    return {
-      answerText: finalAnswer,
-      reason: `Verified source from ${firstResult.title}.`,
-      citedUrls: [firstResult.url],
-      isContradicted: false,
-    };
+    // No hardcoded or fake template fallback. Return null so caller presents clean verified sources.
+    return null;
   }
 }
 

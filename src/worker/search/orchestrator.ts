@@ -10,6 +10,7 @@ import {
   GroundedAnswerResult,
 } from './types';
 import trustedDomainsJson from '../../../config/trusted-domains.json';
+import { extractContentWords } from '../services/boundary';
 
 export class SearchOrchestrator {
   private config: SearchConfig;
@@ -365,15 +366,20 @@ export class SearchOrchestrator {
       return null;
     }
 
-    // 2. Validate Word Count: 30 to 40 words
-    const words = generatedAnswer.answerText
-      .trim()
+    // 2. Validate Word Count: 30 to 40 words and sentence boundary
+    const text = generatedAnswer.answerText.trim();
+    const words = text
       .split(/\s+/)
       .filter((w) => w.length > 0);
     const wordCount = words.length;
 
     if (wordCount < 30 || wordCount > 40) {
       console.warn(`[SearchOrchestrator] Invalid word count (${wordCount} words; required 30-40).`);
+      return null;
+    }
+
+    if (!/[.!?]$/.test(text)) {
+      console.warn('[SearchOrchestrator] AI answer does not end on a sentence boundary.');
       return null;
     }
 
@@ -390,6 +396,111 @@ export class SearchOrchestrator {
       wordCount,
       citations: validCitations.slice(0, 2), // 1 to 2 source links
       isContradicted: Boolean(generatedAnswer.isContradicted),
+      searchScope,
+      provider,
+    };
+  }
+
+  /**
+   * Relevance check before model: a source is used only if it shares a rare term
+   * with the question or video topic.
+   */
+  public filterRelevantSources(
+    question: string,
+    sources: SearchResult[],
+    videoTopic?: string
+  ): SearchResult[] {
+    if (!sources || sources.length === 0) return [];
+    const { rareWords } = extractContentWords(`${question} ${videoTopic || ''}`);
+    if (rareWords.length === 0) return sources;
+
+    return sources.filter((s) => {
+      const fullText = `${s.title} ${s.snippet} ${s.content || ''}`.toLowerCase();
+      return rareWords.some((rw) => fullText.includes(rw));
+    });
+  }
+
+  /**
+   * Structured validation: { answerable: boolean, answer: string, sourceIds: [] }
+   * Refusal means answerable is false -> returns null (No verified answer state).
+   */
+  public validateStructuredAnswer(
+    output: { answerable: boolean; answer: string; sourceIds?: any[] } | null | undefined,
+    retrievedSources: SearchResult[],
+    searchScope: 'trusted' | 'open' = 'trusted',
+    provider = 'workers_ai'
+  ): GroundedAnswerResult | null {
+    if (!output || typeof output !== 'object') return null;
+
+    if (!output.answerable) {
+      console.warn('[SearchOrchestrator] Model indicated answerable: false (refusal).');
+      return null;
+    }
+
+    const text = (output.answer || '').trim();
+    if (!text) return null;
+
+    if (/\b(couldn't find|cannot find|no information|does not contain|not mentioned)\b/i.test(text)) {
+      console.warn('[SearchOrchestrator] Model answer text contains refusal phrasing.');
+      return null;
+    }
+
+    const words = text.split(/\s+/).filter((w) => w.length > 0);
+    const wordCount = words.length;
+
+    if (wordCount < 30 || wordCount > 40) {
+      console.warn(`[SearchOrchestrator] Invalid word count (${wordCount} words; required 30-40).`);
+      return null;
+    }
+
+    if (!/[.!?]$/.test(text)) {
+      console.warn('[SearchOrchestrator] Answer does not end on a sentence boundary.');
+      return null;
+    }
+
+    let validCitations: Array<{ title: string; url: string; domain: string }> = [];
+    if (Array.isArray(output.sourceIds) && output.sourceIds.length > 0) {
+      for (const id of output.sourceIds) {
+        const idx = typeof id === 'number' ? id - 1 : parseInt(id, 10) - 1;
+        if (idx >= 0 && idx < retrievedSources.length) {
+          const s = retrievedSources[idx];
+          let domain = '';
+          try {
+            domain = new URL(s.url).hostname.replace(/^www\./, '');
+          } catch {
+            domain = s.url;
+          }
+          validCitations.push({ title: s.title, url: s.url, domain });
+        }
+      }
+    }
+
+    if (validCitations.length === 0 && retrievedSources.length > 0) {
+      validCitations = retrievedSources.slice(0, 2).map((s) => {
+        let domain = '';
+        try {
+          domain = new URL(s.url).hostname.replace(/^www\./, '');
+        } catch {
+          domain = s.url;
+        }
+        return { title: s.title, url: s.url, domain };
+      });
+    }
+
+    if (validCitations.length === 0) return null;
+
+    let finalReason = 'Generated via grounded AI synthesis';
+    if (searchScope === 'open') {
+      finalReason = '[Open Web Search] Generated via grounded AI synthesis';
+    }
+
+    return {
+      isAiLabeled: true,
+      reason: finalReason,
+      answerText: text,
+      wordCount,
+      citations: validCitations.slice(0, 2),
+      isContradicted: false,
       searchScope,
       provider,
     };

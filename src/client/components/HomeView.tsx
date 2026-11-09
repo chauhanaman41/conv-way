@@ -122,7 +122,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectVideo }) => {
             type="text"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="e.g. https://www.youtube.com/watch?v=zIwLWfaAg-8 or zIwLWfaAg-8"
+            placeholder="Paste any YouTube video URL or ID (e.g. https://www.youtube.com/watch?v=...)"
             className="flex-1 bg-black border border-charcoal px-3 py-2.5 font-mono text-xs text-parchment placeholder-ash focus:border-petal rounded-sm"
           />
           <button
@@ -200,70 +200,57 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectVideo }) => {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {displayedVideos.map((video) => {
-            const isMuskRef = video.videoId === 'zIwLWfaAg-8';
-            return (
-              <div
-                key={video.videoId}
-                onClick={() => onSelectVideo(video)}
-                className={`group cursor-pointer border transition-all p-2 bg-black flex flex-col justify-between ${
-                  isMuskRef
-                    ? 'border-petal/80 hover:border-petal'
-                    : 'border-charcoal hover:border-bone'
-                }`}
-              >
-                <div className="space-y-2.5">
-                  {/* 16:9 Sharp 0px Media Frame */}
-                  <div className="relative aspect-video w-full overflow-hidden bg-black">
-                    <img
-                      src={video.thumbnailUrl}
-                      alt={video.title}
-                      className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200"
-                      loading="lazy"
-                    />
-                    {/* Duration badge */}
-                    <span className="absolute bottom-1 right-1 bg-black/90 font-mono text-[10px] text-parchment px-1.5 py-0.5">
-                      {formatDuration(video.durationSec)}
-                    </span>
-                    {/* Reference badge */}
-                    {isMuskRef && (
-                      <span className="absolute top-1 left-1 bg-petal text-black font-mono text-[9px] font-bold px-1.5 py-0.5 uppercase tracking-wider">
-                        REFERENCE EPISODE
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Title & Channel */}
-                  <div className="space-y-1">
-                    <h3 className="font-sans font-semibold text-xs sm:text-sm text-parchment line-clamp-2 group-hover:text-petal transition-colors">
-                      {video.title}
-                    </h3>
-                    <p className="font-mono text-[11px] text-bone truncate">
-                      {video.channelTitle}
-                    </p>
-                  </div>
+          {displayedVideos.map((video) => (
+            <div
+              key={video.videoId}
+              onClick={() => onSelectVideo(video)}
+              className="group cursor-pointer border border-charcoal hover:border-bone transition-all p-2 bg-black flex flex-col justify-between"
+            >
+              <div className="space-y-2.5">
+                {/* 16:9 Sharp 0px Media Frame */}
+                <div className="relative aspect-video w-full overflow-hidden bg-black">
+                  <img
+                    src={video.thumbnailUrl}
+                    alt={video.title}
+                    className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200"
+                    loading="lazy"
+                  />
+                  {/* Duration badge */}
+                  <span className="absolute bottom-1 right-1 bg-black/90 font-mono text-[10px] text-parchment px-1.5 py-0.5">
+                    {formatDuration(video.durationSec)}
+                  </span>
                 </div>
 
-                {/* Footer status */}
-                <div className="pt-3 mt-2 border-t border-charcoal/50 flex items-center justify-between font-mono text-[10px]">
-                  <span
-                    className={
-                      video.captionStatus === 'READY'
-                        ? 'text-lime'
-                        : video.captionStatus === 'BUDGET_DEFERRED'
-                        ? 'text-ash'
-                        : 'text-bone'
-                    }
-                  >
-                    ● {video.captionStatus === 'READY' ? 'INTERACTIVE READY' : video.captionStatus}
-                  </span>
-                  <span className="text-parchment group-hover:translate-x-0.5 transition-transform">
-                    EXPLORE →
-                  </span>
+                {/* Title & Channel */}
+                <div className="space-y-1">
+                  <h3 className="font-sans font-semibold text-xs sm:text-sm text-parchment line-clamp-2 group-hover:text-petal transition-colors">
+                    {video.title}
+                  </h3>
+                  <p className="font-mono text-[11px] text-bone truncate">
+                    {video.channelTitle}
+                  </p>
                 </div>
               </div>
-            );
-          })}
+
+              {/* Footer status */}
+              <div className="pt-3 mt-2 border-t border-charcoal/50 flex items-center justify-between font-mono text-[10px]">
+                <span
+                  className={
+                    video.captionStatus === 'READY'
+                      ? 'text-lime'
+                      : video.captionStatus === 'BUDGET_DEFERRED'
+                      ? 'text-ash'
+                      : 'text-bone'
+                  }
+                >
+                  ● {video.captionStatus === 'READY' ? 'READY' : video.captionStatus}
+                </span>
+                <span className="text-parchment group-hover:translate-x-0.5 transition-transform">
+                  EXPLORE →
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

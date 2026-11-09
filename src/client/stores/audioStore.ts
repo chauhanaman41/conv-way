@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { useSettingsStore } from './settingsStore';
 import { usePlaybackStore } from './playbackStore';
+import { attachBrowserAudioCleanup } from '../audio/audioProcessor';
 
 export type AudioPipelineStatus = 'IDLE' | 'LISTENING' | 'RECORDING' | 'THINKING' | 'SPEAKING';
+export type MicQuality = 'medium' | 'low' | 'noisy';
 
 interface AudioState {
   status: AudioPipelineStatus;
@@ -12,12 +14,19 @@ interface AudioState {
   liveTranscription: string;
   lastFinalQuestion: string | null;
 
+  // Mic Quality Gate & Measurement
+  micQuality: MicQuality | null;
+  micQualityLabel: string | null;
+  isGuidanceDismissed: boolean;
+  showGuidanceModal: boolean;
+
   // Web Audio Context & Nodes
   audioContext: AudioContext | null;
   analyserNode: AnalyserNode | null;
   mediaStream: MediaStream | null;
   mediaRecorder: MediaRecorder | null;
   recognition: any;
+  onFinalUtterance: ((text: string) => void) | null;
 
   // Actions
   startListening: () => Promise<void>;
@@ -28,7 +37,19 @@ interface AudioState {
   setLiveTranscription: (text: string) => void;
   setStatus: (status: AudioPipelineStatus) => void;
   clearTranscript: () => void;
+  setOnFinalUtterance: (fn: ((text: string) => void) | null) => void;
+  dismissGuidance: () => void;
+  setShowGuidanceModal: (show: boolean) => void;
+  setMicQuality: (quality: MicQuality | null, label?: string | null) => void;
 }
+
+const getStoredGuidanceDismissed = (): boolean => {
+  try {
+    return sessionStorage.getItem('conv_way_mic_guidance_dismissed') === 'true';
+  } catch {
+    return false;
+  }
+};
 
 export const useAudioStore = create<AudioState>((set, get) => ({
   status: 'IDLE',
@@ -38,17 +59,52 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   liveTranscription: '',
   lastFinalQuestion: null,
 
+  micQuality: null,
+  micQualityLabel: null,
+  isGuidanceDismissed: getStoredGuidanceDismissed(),
+  showGuidanceModal: false,
+
   audioContext: null,
   analyserNode: null,
   mediaStream: null,
   mediaRecorder: null,
   recognition: null,
+  onFinalUtterance: null,
+
+  setOnFinalUtterance: (fn) => set({ onFinalUtterance: fn }),
+
+  dismissGuidance: () => {
+    try {
+      sessionStorage.setItem('conv_way_mic_guidance_dismissed', 'true');
+    } catch {}
+    set({ isGuidanceDismissed: true, showGuidanceModal: false });
+  },
+
+  setShowGuidanceModal: (showGuidanceModal) => set({ showGuidanceModal }),
+
+  setMicQuality: (micQuality, label) =>
+    set({
+      micQuality,
+      micQualityLabel:
+        label !== undefined
+          ? label
+          : micQuality === 'medium'
+          ? 'Mic transcript, quality: medium'
+          : micQuality === 'low'
+          ? 'Mic transcript, quality: low'
+          : micQuality === 'noisy'
+          ? 'Transcript too noisy. Try a quieter room'
+          : null,
+    }),
 
   startListening: async () => {
     try {
+      // Step 2 & Owner Decisions:
+      // echoCancellation MUST BE FALSE to capture phone speaker playback without AEC suppression.
+      // noiseSuppression and autoGainControl MUST BE TRUE to control ambient noise and level fluctuations.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
+          echoCancellation: false,
           noiseSuppression: true,
           autoGainControl: true,
         },
@@ -56,10 +112,14 @@ export const useAudioStore = create<AudioState>((set, get) => ({
 
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = audioCtx.createMediaStreamSource(stream);
+
+      // Step 3: Signal cleanup in browser (100 Hz high-pass filter + dynamics compressor)
+      const cleanup = attachBrowserAudioCleanup(audioCtx, source);
+
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0.4;
-      source.connect(analyser);
+      cleanup.processedSource.connect(analyser);
 
       // Start RMS monitoring loop
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -112,7 +172,12 @@ export const useAudioStore = create<AudioState>((set, get) => ({
           for (let i = event.resultIndex; i < event.results.length; ++i) {
             const transcript = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
-              set({ lastFinalQuestion: transcript.trim(), liveTranscription: transcript.trim() });
+              const text = transcript.trim();
+              set({ lastFinalQuestion: text, liveTranscription: text });
+              const { onFinalUtterance, isAmbientActive } = get();
+              if (onFinalUtterance && isAmbientActive && text.length > 2) {
+                onFinalUtterance(text);
+              }
             } else {
               interim += transcript;
             }
@@ -178,7 +243,12 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   },
 
   toggleAmbientMode: async () => {
-    const { isAmbientActive, startListening, stopListening } = get();
+    const { isAmbientActive, startListening, stopListening, isGuidanceDismissed } = get();
+    if (!isGuidanceDismissed) {
+      set({ showGuidanceModal: true });
+      return;
+    }
+
     if (isAmbientActive) {
       stopListening();
     } else {
@@ -188,6 +258,11 @@ export const useAudioStore = create<AudioState>((set, get) => ({
   },
 
   startPushToTalk: async () => {
+    if (!get().isGuidanceDismissed) {
+      set({ showGuidanceModal: true });
+      return;
+    }
+
     let stream = get().mediaStream;
     if (!stream) {
       await get().startListening();
@@ -223,7 +298,11 @@ export const useAudioStore = create<AudioState>((set, get) => ({
     // Check if native speech recognition already caught a transcription
     if (state.liveTranscription && state.liveTranscription.trim().length > 3) {
       const q = state.liveTranscription.trim();
-      set({ status: 'IDLE' });
+      set({
+        status: 'IDLE',
+        micQuality: 'medium',
+        micQualityLabel: 'Mic transcript, quality: medium',
+      });
       return q;
     }
 
@@ -250,9 +329,60 @@ export const useAudioStore = create<AudioState>((set, get) => ({
               body: formData,
             });
             if (res.ok) {
-              const data = await res.json() as any;
-              set({ status: 'IDLE', liveTranscription: data.transcript });
-              resolve(data.transcript || null);
+              const data = (await res.json()) as any;
+              const text = (data.transcript || '').trim();
+              const conf = typeof data.confidence === 'number' ? data.confidence : null;
+
+              let quality: MicQuality = 'medium';
+              let label = 'Mic transcript, quality: medium';
+
+              // Step 5: Quality Gate
+              // Use Prisma's confidence values to drop low-confidence segments.
+              // If confidence is not returned, use measured WER / word count threshold.
+              if (conf !== null) {
+                if (conf >= 0.75) {
+                  quality = 'medium';
+                  label = 'Mic transcript, quality: medium';
+                } else if (conf >= 0.45) {
+                  quality = 'low';
+                  label = 'Mic transcript, quality: low';
+                } else {
+                  quality = 'noisy';
+                  label = 'Transcript too noisy. Try a quieter room';
+                }
+              } else {
+                const words = text.split(/\s+/).filter(Boolean);
+                if (words.length < 2 || text.length < 5) {
+                  quality = 'noisy';
+                  label = 'Transcript too noisy. Try a quieter room';
+                } else if (words.length <= 4) {
+                  quality = 'low';
+                  label = 'Mic transcript, quality: low';
+                } else {
+                  quality = 'medium';
+                  label = 'Mic transcript, quality: medium';
+                }
+              }
+
+              if (quality === 'noisy') {
+                // If measured WER / confidence indicates noisy room, do NOT produce answers from it
+                set({
+                  status: 'IDLE',
+                  micQuality: 'noisy',
+                  micQualityLabel: label,
+                  liveTranscription: '',
+                });
+                resolve(null);
+                return;
+              }
+
+              set({
+                status: 'IDLE',
+                micQuality: quality,
+                micQualityLabel: label,
+                liveTranscription: text,
+              });
+              resolve(text || null);
               return;
             }
           } catch (e) {

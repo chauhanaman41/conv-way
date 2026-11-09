@@ -3,6 +3,7 @@ export interface Env {
   DB: D1Database;
   KV: KVNamespace;
   ASSETS?: Fetcher;
+  AI?: any;
 
   // Variables
   ENVIRONMENT?: string;
@@ -21,6 +22,9 @@ export interface Env {
   GOOGLE_CSE_SUNSET?: string;
   GOOGLE_CSE_DAILY_CAP?: string;
   SEARCH_CACHE_TTL_DAYS?: string;
+  LLM_WORKERS_AI_ENABLED?: string;
+  LLM_PROVIDER_ORDER?: string;
+  WORKERS_AI_MODEL?: string;
 
   // Secrets
   GNANI_API_KEY?: string;
