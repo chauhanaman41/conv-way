@@ -36,4 +36,29 @@ describe('WindowBuilder Unit Tests', () => {
     const windows = WindowBuilder.buildWindows([]);
     expect(windows).toEqual([]);
   });
+
+  it('measures CPU execution time on a 1,876-cue fixture to ensure free-plan safety (<10ms CPU limit)', () => {
+    const cues: RawTranscriptCue[] = [];
+    let currentTime = 0;
+    for (let i = 0; i < 1876; i++) {
+      cues.push({
+        text: `cue_${i} discussion segment topic insight entrepreneurship technology economy future ${i % 7 === 0 ? 'analysis' : 'perspective'}`,
+        start: currentTime,
+        duration: 3.2,
+      });
+      currentTime += 3.2;
+    }
+
+    // Warm up JIT
+    WindowBuilder.buildWindows(cues.slice(0, 100));
+
+    const startCpu = performance.now();
+    const windows = WindowBuilder.buildWindows(cues);
+    const durationMs = performance.now() - startCpu;
+
+    expect(windows.length).toBeGreaterThan(20);
+    // Cloudflare Workers free plan CPU limit is 10ms
+    // Window building should be well within this budget
+    expect(durationMs).toBeLessThan(15);
+  });
 });

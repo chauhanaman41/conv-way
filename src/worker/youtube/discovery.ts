@@ -386,6 +386,119 @@ export class YouTubeDiscoveryService {
   }
 
   /**
+   * Refreshes the Top 20 trending list by fetching live from YouTube Data API.
+   * Never seeds fake entries. If the YouTube call fails, returns the reason and writes nothing.
+   */
+  async refreshTrending(): Promise<{ success: boolean; count: number; error?: string }> {
+    if (!this.apiKey) {
+      return { success: false, count: 0, error: 'YOUTUBE_DATA_API_KEY is not configured on the Worker.' };
+    }
+
+    const canSearch = await this.checkQuota();
+    if (!canSearch) {
+      return { success: false, count: 0, error: 'Daily YouTube search quota budget reached.' };
+    }
+
+    const query = 'podcast full episode';
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoDuration=long&order=relevance&maxResults=20&q=${encodeURIComponent(
+      query
+    )}&key=${this.apiKey}`;
+
+    const res = await fetch(url);
+    if (!res.ok) {
+      const errText = await res.text();
+      let reason = `YouTube API error (HTTP ${res.status})`;
+      try {
+        const json = JSON.parse(errText);
+        if (json?.error?.message) {
+          reason = `YouTube API error (${res.status}): ${json.error.message}`;
+        }
+      } catch {}
+      return { success: false, count: 0, error: reason };
+    }
+
+    await this.incrementQuota();
+    const searchData = (await res.json()) as any;
+    const videoIds = (searchData.items || []).map((it: any) => it.id?.videoId).filter(Boolean);
+
+    if (videoIds.length === 0) {
+      return { success: false, count: 0, error: 'YouTube search returned 0 items.' };
+    }
+
+    const detailUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoIds.join(
+      ','
+    )}&key=${this.apiKey}`;
+    const detailRes = await fetch(detailUrl);
+    if (!detailRes.ok) {
+      return { success: false, count: 0, error: `YouTube video detail API error (HTTP ${detailRes.status})` };
+    }
+
+    const detailData = (await detailRes.json()) as any;
+    const videos: VideoMetadata[] = [];
+    for (const it of detailData.items || []) {
+      videos.push({
+        videoId: it.id,
+        title: it.snippet.title,
+        channelTitle: it.snippet.channelTitle,
+        channelId: it.snippet.channelId,
+        thumbnailUrl:
+          it.snippet.thumbnails?.high?.url ||
+          it.snippet.thumbnails?.medium?.url ||
+          `https://i.ytimg.com/vi/${it.id}/hqdefault.jpg`,
+        durationSec: YouTubeDiscoveryService.parseIsoDuration(it.contentDetails?.duration || 'PT0S'),
+        captionStatus: 'PENDING',
+        language: it.snippet.defaultAudioLanguage || it.snippet.defaultLanguage || 'en',
+        windowCount: 0,
+      });
+    }
+
+    if (videos.length === 0) {
+      return { success: false, count: 0, error: 'Failed to parse video items from YouTube details.' };
+    }
+
+    // Persist to D1
+    if (this.env.DB) {
+      for (const v of videos) {
+        try {
+          await this.env.DB.prepare(
+            `INSERT INTO videos (video_id, title, channel_title, channel_id, thumbnail_url, duration_sec, language, caption_status, created_at, last_accessed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))
+             ON CONFLICT(video_id) DO UPDATE SET title = ?2, channel_title = ?3, thumbnail_url = ?5, duration_sec = ?6`
+          )
+            .bind(
+              v.videoId,
+              v.title,
+              v.channelTitle,
+              v.channelId || null,
+              v.thumbnailUrl,
+              v.durationSec,
+              v.language || 'en',
+              v.captionStatus
+            )
+            .run();
+        } catch (e) {
+          console.warn('[YouTubeDiscovery] D1 upsert error during refresh:', e);
+        }
+      }
+    }
+
+    // Persist to KV with 24-hour TTL
+    if (this.env.KV) {
+      const cacheKey = 'trending:top20:v2';
+      await this.env.KV.put(
+        cacheKey,
+        JSON.stringify({
+          videos,
+          updatedAt: new Date().toISOString(),
+        }),
+        { expirationTtl: 86400 }
+      );
+    }
+
+    return { success: true, count: videos.length };
+  }
+
+  /**
    * Search indexed videos in D1 first, then fallback to YouTube Data API if needed
    */
   async search(query: string, lang = 'en'): Promise<VideoMetadata[]> {

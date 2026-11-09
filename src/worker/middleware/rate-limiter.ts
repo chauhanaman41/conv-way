@@ -1,7 +1,7 @@
 import { Context, Next } from 'hono';
 import { AppEnv, ApiErrorResponse } from '../types';
 
-export type EndpointCategory = 'ASK_QUERY' | 'INIT_TRANSCRIPT' | 'VOICE_TRANSCRIBE' | 'GENERAL';
+export type EndpointCategory = 'ASK_QUERY' | 'INIT_TRANSCRIPT' | 'VOICE_TRANSCRIBE' | 'WAY_QUESTIONS' | 'GENERAL';
 
 export interface RateLimitRule {
   category: EndpointCategory;
@@ -13,6 +13,7 @@ const RULES: Record<EndpointCategory, { limit: number; windowSeconds: number }> 
   ASK_QUERY: { limit: 15, windowSeconds: 60 }, // 15 queries / minute
   INIT_TRANSCRIPT: { limit: 2, windowSeconds: 600 }, // 2 inits / 10 minutes
   VOICE_TRANSCRIBE: { limit: 6, windowSeconds: 60 }, // 6 audio transcriptions / minute
+  WAY_QUESTIONS: { limit: 30, windowSeconds: 60 }, // 30 way question requests / minute
   GENERAL: { limit: 60, windowSeconds: 60 }, // 60 general requests / minute
 };
 

@@ -32,19 +32,23 @@ npx wrangler secret put IP_HASH_SALT
 
 ## 2. Optional Feature Secrets (Execute as needed)
 
-If omitted, the app will continue to run with the respective feature gracefully disabled.
+If omitted, the app will continue to run with the respective feature gracefully disabled, returning honest status messages:
 
 ```bash
 # 6. Tavily API key (enables Tavily search for Pass 1 trusted sites and Pass 2 open web)
+# Impact if missing: Tavily search disabled; queries fall back to Exa or Google CSE.
 npx wrangler secret put TAVILY_API_KEY
 
 # 7. Exa API key (enables Exa neural open web search fallback)
+# Impact if missing: Exa search disabled; queries fall back to Tavily.
 npx wrangler secret put EXA_API_KEY
 
 # 8. Gnani API key (enables Evon rerank, Prisma ASR, and Timbre voice synthesis)
+# Impact if missing: Speech input falls back to browser Web Speech API; Way questions use Workers AI.
 npx wrangler secret put GNANI_API_KEY
 
 # 9. Google Custom Search JSON API key (legacy trusted domain search)
+# Impact if missing: Google CSE disabled; search falls back directly to Tavily/Exa.
 npx wrangler secret put WEB_SEARCH_API_KEY
 
 # 10. Google Custom Search Engine ID (paired with WEB_SEARCH_API_KEY)

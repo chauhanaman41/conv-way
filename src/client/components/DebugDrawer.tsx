@@ -43,8 +43,14 @@ export const DebugDrawer: React.FC<DebugDrawerProps> = ({ telemetry }) => {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('debug') === '1') {
-        setHasDebugParam(true);
+      const isDebugRequested = urlParams.get('debug') === '1';
+      const hasAdminAuth = Boolean(urlParams.get('adminKey') || localStorage.getItem('conv_admin_key'));
+
+      // In production, debug drawer is strictly disabled unless admin authenticated
+      if (isDebugRequested) {
+        if (!import.meta.env.PROD || hasAdminAuth) {
+          setHasDebugParam(true);
+        }
       }
     }
   }, []);

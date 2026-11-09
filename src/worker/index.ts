@@ -22,22 +22,54 @@ app.use(
   })
 );
 
-// Standard error handling
+// Standard error handling (sanitizes verbose messages in production unless admin key is present)
 app.onError((err, c) => {
   console.error('[Worker Error]', err);
   const status = err.message === 'NO_VERIFIED_MATCH' ? 404 : 500;
+  const isAdmin =
+    Boolean(c.env?.ADMIN_CALIBRATION_SECRET) &&
+    c.req.header('X-Admin-Calibration-Key') === c.env.ADMIN_CALIBRATION_SECRET;
+  const isProd = c.env?.ENVIRONMENT === 'production';
+
+  const safeMessage =
+    err.message === 'NO_VERIFIED_MATCH'
+      ? 'No verified video segment or grounded source found for this question.'
+      : isProd && !isAdmin
+      ? 'An unexpected server error occurred.'
+      : err.message || 'An unexpected server error occurred.';
+
   const errorResponse: ApiErrorResponse = {
     ok: false,
     error: {
       code: err.message === 'NO_VERIFIED_MATCH' ? 'NO_VERIFIED_MATCH' : 'INTERNAL_SERVER_ERROR',
-      message:
-        err.message === 'NO_VERIFIED_MATCH'
-          ? 'No verified video segment or grounded source found for this question.'
-          : err.message || 'An unexpected server error occurred.',
+      message: safeMessage,
       retryable: status !== 404,
     },
   };
   return c.json(errorResponse, status);
+});
+
+// Admin authentication middleware: protects all /api/admin/* endpoints
+app.use('/api/admin/*', async (c, next) => {
+  const adminKey = c.req.header('X-Admin-Calibration-Key');
+  if (
+    !adminKey ||
+    !c.env.ADMIN_CALIBRATION_SECRET ||
+    adminKey !== c.env.ADMIN_CALIBRATION_SECRET
+  ) {
+    return c.json(
+      {
+        ok: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Valid X-Admin-Calibration-Key header is required.',
+          retryable: false,
+        },
+      },
+      401
+    );
+  }
+  return next();
 });
 
 // =============================================================================
@@ -391,7 +423,7 @@ app.get('/api/videos/:videoId/status', async (c) => {
 // =============================================================================
 
 // GET /api/videos/:videoId/way?windowIndex={index}&lang={lang}&mode={full|titles}
-app.get('/api/videos/:videoId/way', async (c) => {
+app.get('/api/videos/:videoId/way', rateLimiterMiddleware('WAY_QUESTIONS'), async (c) => {
   const videoId = c.req.param('videoId');
   if (!videoId) {
     return c.json({ ok: false, error: { code: 'INVALID_VIDEO_ID', message: 'Missing videoId', retryable: false } }, 400);
@@ -510,6 +542,12 @@ app.post('/api/query/ask', rateLimiterMiddleware('ASK_QUERY'), async (c) => {
 
   try {
     const answer = await orchestrator.ask(parseResult.data, ipHash);
+    const isAdmin =
+      Boolean(c.env?.ADMIN_CALIBRATION_SECRET) &&
+      c.req.header('X-Admin-Calibration-Key') === c.env.ADMIN_CALIBRATION_SECRET;
+    if (c.env?.ENVIRONMENT === 'production' && !isAdmin && (answer as any).debug) {
+      delete (answer as any).debug;
+    }
     return c.json(answer);
   } catch (err: any) {
     if (err.message === 'NO_VERIFIED_MATCH') {
@@ -726,6 +764,29 @@ app.post('/api/admin/calibrate', async (c) => {
   return c.json({ ok: true, status: 'NO_DB' });
 });
 
+// POST /api/admin/refresh-trending
+app.post('/api/admin/refresh-trending', async (c) => {
+  const discovery = new YouTubeDiscoveryService(c.env);
+  const result = await discovery.refreshTrending();
+
+  if (!result.success) {
+    return c.json(
+      {
+        ok: false,
+        count: 0,
+        error: result.error || 'Failed to refresh trending podcasts from YouTube.',
+      },
+      502
+    );
+  }
+
+  return c.json({
+    ok: true,
+    count: result.count,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // POST /api/admin/warm
 app.post('/api/admin/warm', async (c) => {
   const adminKey = c.req.header('X-Admin-Calibration-Key');
@@ -769,12 +830,15 @@ export default {
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     console.log('[Cron Trigger] Executing daily 02:00 UTC maintenance job...');
-    const discovery = new YouTubeDiscoveryService(env);
-
-    // Refresh Top 20 trending list
-    await discovery.getTrending().catch((err) => {
-      console.error('[Cron] Error refreshing trending podcasts:', err);
-    });
+    if (!env.YOUTUBE_DATA_API_KEY) {
+      console.log('[Cron Trigger] skipped: key not set');
+    } else {
+      const discovery = new YouTubeDiscoveryService(env);
+      const res = await discovery.refreshTrending().catch((err) => {
+        console.error('[Cron] Error refreshing trending podcasts:', err);
+      });
+      console.log('[Cron] Refreshed trending podcasts result:', res);
+    }
 
     // Clean up expired rate limit counters older than 24 hours
     if (env.DB) {

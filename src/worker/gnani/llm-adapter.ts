@@ -111,10 +111,45 @@ export class WorkersAiProvider implements ILanguageModelProvider {
   private verified: boolean = false;
   private lastError?: string;
   private neuronUsageToday: number = 0;
+  private kvBinding?: any;
 
-  constructor(aiBinding?: any, model = '@cf/meta/llama-3.2-3b-instruct') {
+  constructor(aiBinding?: any, model = '@cf/meta/llama-3.2-3b-instruct', kvBinding?: any) {
     this.aiBinding = aiBinding;
     this.model = model;
+    this.kvBinding = kvBinding;
+  }
+
+  private async checkDailyNeuronBudget(): Promise<boolean> {
+    if (!this.kvBinding) return true;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const key = `workers_ai:neurons:${today}`;
+      const val = await this.kvBinding.get(key);
+      const used = parseInt(val || '0', 10);
+      this.neuronUsageToday = used;
+      // Cap at 9,500 to stay safely below 10,000 free allowance
+      if (used >= 9500) {
+        console.warn(`[WorkersAiProvider] Daily neuron ceiling reached (${used}/10000). AI step-down active.`);
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  private async recordNeuronConsumption(estimatedNeurons: number): Promise<void> {
+    this.neuronUsageToday += estimatedNeurons;
+    if (!this.kvBinding) return;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const key = `workers_ai:neurons:${today}`;
+      const val = await this.kvBinding.get(key);
+      const used = parseInt(val || '0', 10);
+      await this.kvBinding.put(key, String(used + estimatedNeurons), { expirationTtl: 172800 });
+    } catch (e) {
+      console.warn('[WorkersAiProvider] KV neuron counter write error:', e);
+    }
   }
 
   public isAvailable(): boolean {
@@ -146,6 +181,8 @@ export class WorkersAiProvider implements ILanguageModelProvider {
 
   public async predictWayQuestions(window: SpeechWindow, videoDurationSec?: number): Promise<EvonWayPrediction | null> {
     if (!this.aiBinding) return null;
+    const canRun = await this.checkDailyNeuronBudget();
+    if (!canRun) return null;
 
     const candidateModels = [
       this.model,
@@ -177,7 +214,7 @@ Transcript:
 
         this.verified = true;
         this.model = modelToTry;
-        this.neuronUsageToday += 5;
+        await this.recordNeuronConsumption(20);
         this.lastError = undefined;
 
         const text = response?.response || response?.text || (typeof response === 'string' ? response : '');
@@ -215,6 +252,9 @@ Transcript:
     speakerClaim?: string
   ): Promise<EvonFallbackResult | null> {
     if (!this.aiBinding) return null;
+    const canRun = await this.checkDailyNeuronBudget();
+    if (!canRun) return null;
+
     const prompt = `You are a concise grounded factual assistant. Answer the user question strictly using only the provided search results.
 Rules:
 - The answer must be strictly between 30 and 40 words.
@@ -236,7 +276,7 @@ ${searchResults.slice(0, 3).map((r, i) => `[${i + 1}] Title: ${r.title}\nURL: ${
       });
 
       this.verified = true;
-      this.neuronUsageToday += 3;
+      await this.recordNeuronConsumption(15);
       this.lastError = undefined;
 
       const text = response?.response || response?.text || (typeof response === 'string' ? response : '');
@@ -273,6 +313,7 @@ export class LlmAdapterManager {
     const isEnvObj = typeof gnaniApiKeyOrEnv === 'object' && gnaniApiKeyOrEnv !== null;
     const gnaniKey = typeof gnaniApiKeyOrEnv === 'string' ? gnaniApiKeyOrEnv : gnaniApiKeyOrEnv?.GNANI_API_KEY;
     const ai = isEnvObj ? gnaniApiKeyOrEnv?.AI || aiBinding : aiBinding;
+    const kv = isEnvObj ? gnaniApiKeyOrEnv?.KV : undefined;
     const isAiEnabled = isEnvObj ? gnaniApiKeyOrEnv?.LLM_WORKERS_AI_ENABLED !== 'false' : workersAiEnabled;
     const orderStr = isEnvObj ? (gnaniApiKeyOrEnv?.LLM_PROVIDER_ORDER || providerOrder) : providerOrder;
     const modelId = isEnvObj ? (gnaniApiKeyOrEnv?.WORKERS_AI_MODEL || model) : model;
@@ -281,14 +322,14 @@ export class LlmAdapterManager {
     for (const name of orderList) {
       if (name === 'workers_ai') {
         if (isAiEnabled) {
-          this.providers.push(new WorkersAiProvider(ai, modelId));
+          this.providers.push(new WorkersAiProvider(ai, modelId, kv));
         }
       } else if (name === 'evon') {
         this.providers.push(new EvonLlmProvider(gnaniKey));
       }
     }
     if (this.providers.length === 0 && isAiEnabled) {
-      this.providers.push(new WorkersAiProvider(ai, modelId));
+      this.providers.push(new WorkersAiProvider(ai, modelId, kv));
     }
   }
 
